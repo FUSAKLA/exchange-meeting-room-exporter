@@ -1,6 +1,8 @@
 # exchange-meeting-room-exporter
 Prometheus exporter providing info about occupancy.
 
+![Docker Pulls](https://img.shields.io/docker/pulls/fusakla/exchange-meeting-room-exporter)
+
 ```
 $ exchange-meeting-room-exporter.py --help
 usage: exchange-meeting-room-exporter.py [-h] [--port PORT] -s EXCHANGE_SERVER
