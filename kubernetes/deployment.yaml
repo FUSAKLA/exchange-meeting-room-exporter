@@ -1,0 +1,48 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: exchange-meeting-room-exporter
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: exchange-meeting-room-exporter
+    spec:
+      containers:
+      - name: exchange-meeting-room-exporter
+        image: "fusakla/exchange-meeting-room-exporter:latest"
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: exchange-meeting-room-exporter-secret
+          mountPath: "/exchange-meeting-room-exporter/secrets/"
+        ports:
+        - containerPort: 8000
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /liveness
+            port: 8000
+          initialDelaySeconds: 10
+          timeoutSeconds: 2
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 8000
+          initialDelaySeconds: 10
+          timeoutSeconds: 2
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: exchange-meeting-room-exporter-secret
+        secret:
+          secretName: exchange-meeting-room-exporter
