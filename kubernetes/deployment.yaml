@@ -14,6 +14,11 @@ spec:
       containers:
       - name: exchange-meeting-room-exporter
         image: "fusakla/exchange-meeting-room-exporter:latest"
+        args:
+          - --port=8000
+          - --exchange-server=foo.bar
+          - --username=foo
+          - --password-file=/exchange-meeting-room-exporter/secrets/password
         imagePullPolicy: Always
         volumeMounts:
         - name: exchange-meeting-room-exporter-secret
