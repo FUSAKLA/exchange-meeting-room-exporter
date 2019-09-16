@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-# [0.2.0] - 2019-09-16
+## [0.2.0] - 2019-09-16
 
 ### Added
 - `exchange_meeting_room_will_be_occupied_timestamp` metric with timestamp of next occupancy start.
