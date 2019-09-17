@@ -45,16 +45,16 @@ class ExchangeMeetingRoomCollector:
 
     def __update_cache(self):
         meeting_room_occupancy = GaugeMetricFamily('exchange_meeting_room_occupied', 'This metric exposes info about meeting room occupancy',
-                                                   labels=["meeting_room_name", "meeting_room_email"])
+                                                   labels=["meeting_room_list_name", "meeting_room_name", "meeting_room_email"])
         meeting_room_will_be_occupied = GaugeMetricFamily('exchange_meeting_room_will_be_occupied_timestamp',
                                                           'This metric exposes timestamp of closest start of the room occupancy.',
-                                                          labels=["meeting_room_name", "meeting_room_email"])
+                                                          labels=["meeting_room_list_name", "meeting_room_name", "meeting_room_email"])
         meeting_room_will_be_free = GaugeMetricFamily('exchange_meeting_room_will_be_free_timestamp',
                                                       'This metric exposes timestamp of the most recent time the room will be free.',
-                                                      labels=["meeting_room_name", "meeting_room_email"])
+                                                      labels=["meeting_room_list_name", "meeting_room_name", "meeting_room_email"])
         today_meetings_left = GaugeMetricFamily('exchange_meeting_room_meetings_left_today',
                                                 'This metric exposes number of the meetings till the end of this day.',
-                                                labels=["meeting_room_name", "meeting_room_email"])
+                                                labels=["meeting_room_list_name", "meeting_room_name", "meeting_room_email"])
         now = self.__account.default_timezone.localize(EWSDateTime.now())
         end = self.__account.default_timezone.localize(EWSDateTime.from_datetime(datetime.combine(now.date() + timedelta(days=1), datetime.min.time())))
         room_list_count = 0
@@ -94,10 +94,10 @@ class ExchangeMeetingRoomCollector:
                     if not is_occupied:
                         will_be_occupied = calendar[0].start
                 self.__logger.debug("occupied: {} will_be_free={} will_be_occupied={} events: {}".format(is_occupied, will_be_free, will_be_occupied, events_count))
-                meeting_room_occupancy.add_metric(labels=[room.name, room.email_address], value=int(is_occupied))
-                meeting_room_will_be_occupied.add_metric(labels=[room.name, room.email_address], value=will_be_occupied.timestamp())
-                meeting_room_will_be_free.add_metric(labels=[room.name, room.email_address], value=will_be_free.timestamp())
-                today_meetings_left.add_metric(labels=[room.name, room.email_address], value=events_count)
+                meeting_room_occupancy.add_metric(labels=[room_list.name, room.name, room.email_address], value=int(is_occupied))
+                meeting_room_will_be_occupied.add_metric(labels=[room_list.name, room.name, room.email_address], value=will_be_occupied.timestamp())
+                meeting_room_will_be_free.add_metric(labels=[room_list.name, room.name, room.email_address], value=will_be_free.timestamp())
+                today_meetings_left.add_metric(labels=[room_list.name, room.name, room.email_address], value=events_count)
 
         self.__logger.info("finished processing of {} room lists wit total {} rooms and {} rooms skipped, duration {}".format(
             room_list_count, room_count, skipped_count, datetime.now() - start
