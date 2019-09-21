@@ -8,12 +8,20 @@ from functools import wraps
 
 import prometheus_client
 from exchangelib import Account, Credentials, Configuration, EWSDateTime
-from prometheus_client.core import GaugeMetricFamily, REGISTRY, Histogram
+from prometheus_client.core import GaugeMetricFamily, REGISTRY, Histogram, Counter, Gauge
 from sanic import Sanic, response
 from sanic.exceptions import NotFound
 from sanic.log import logger as sanic_logger
 
 DEFAULT_EMAIL_ADDRESS = "meetingroom-exporter@foo.bar"
+
+errors_total = Counter('exchange_meeting_room_errors_total',
+                       'This metric exposes number of errors encountered.', labelnames=["type"])
+up = Gauge('exchange_meeting_room_up',
+           'This metric reports if metrics collection was successful.')
+last_cache_update = Gauge('exchange_meeting_room_last_successful_cache_update_timestamp',
+                          'This metric exposes timestamp of last successful cache update.',
+                          )
 
 
 class ExchangeMeetingRoomCollector:
@@ -29,21 +37,27 @@ class ExchangeMeetingRoomCollector:
         self.__room_list_regex = re.compile(room_list_regex, re.IGNORECASE)
         self.__room_name_regex = re.compile(room_name_regex, re.IGNORECASE)
         self.__update_interval_seconds = update_interval_seconds
+        self.use_cache = True if update_interval_seconds > 0 else False
 
     def __get_account(self, email: str):
         return Account(primary_smtp_address=email, config=self.__config)
 
     def collect(self):
-        if not self.__cache:
-            self.__update_cache()
-        return self.__cache
+        if self.use_cache:
+            if not self.__cache:
+                self.__cache = self.__collect_metrics()
+            return self.__cache
+        return self.__collect_metrics()
 
-    async def async_update_cache(self):
+    async def start_cache_update(self):
         while True:
             await asyncio.sleep(self.__update_interval_seconds)
-            self.__update_cache()
+            collected_metrics = self.__collect_metrics()
+            if collected_metrics:
+                last_cache_update.set(datetime.now().timestamp())
+            self.__cache = collected_metrics
 
-    def __update_cache(self):
+    def __collect_metrics(self) -> list:
         meeting_room_occupancy = GaugeMetricFamily('exchange_meeting_room_occupied', 'This metric exposes info about meeting room occupancy',
                                                    labels=["meeting_room_list_name", "meeting_room_name", "meeting_room_email"])
         meeting_room_will_be_occupied = GaugeMetricFamily('exchange_meeting_room_will_be_occupied_timestamp',
@@ -61,53 +75,60 @@ class ExchangeMeetingRoomCollector:
         room_count = 0
         skipped_count = 0
         start = datetime.now()
-        for room_list in self.__account.protocol.get_roomlists():
-            self.__logger.debug("processing room list: {}".format(room_list.name))
-            if not self.__room_list_regex.search(room_list.name):
-                self.__logger.debug("processing room list {} skipped, not matching regular expression".format(room_list.name))
-                continue
-            room_list_count += 1
-            for room in self.__account.protocol.get_rooms(room_list.email_address):
-                self.__logger.debug("processing room: {}".format(room.name))
-                if not self.__room_name_regex.search(room.name):
-                    self.__logger.debug("processing room {} skipped, not matching regular expression".format(room.name))
-                    skipped_count += 1
+        try:
+            for room_list in self.__account.protocol.get_roomlists():
+                self.__logger.debug("processing room list: {}".format(room_list.name))
+                if not self.__room_list_regex.search(room_list.name):
+                    self.__logger.debug("processing room list {} skipped, not matching regular expression".format(room_list.name))
                     continue
-                room_count += 1
-                room_account = self.__get_account(room.email_address)
-                calendar = room_account.calendar.view(start=now, end=end)
-                self.__logger.debug("checking calendar: start={} end={}".format(now, end))
+                room_list_count += 1
+                for room in self.__account.protocol.get_rooms(room_list.email_address):
+                    self.__logger.debug("processing room: {}".format(room.name))
+                    if not self.__room_name_regex.search(room.name):
+                        self.__logger.debug("processing room {} skipped, not matching regular expression".format(room.name))
+                        skipped_count += 1
+                        continue
+                    room_count += 1
+                    room_account = self.__get_account(room.email_address)
+                    calendar = room_account.calendar.view(start=now, end=end)
+                    self.__logger.debug("checking calendar: start={} end={}".format(now, end))
 
-                is_occupied = False
-                will_be_free = now
-                will_be_occupied = self.__account.default_timezone.localize(datetime.max - timedelta(1))
-                events_count = 0
-                if calendar.exists():
-                    for i, event in enumerate(calendar):
-                        events_count += 1
-                        if event.start <= now <= event.end:
-                            is_occupied = True
-                            will_be_free = event.end
-                            continue
-                        if will_be_free == event.start:
-                            will_be_free = event.end
-                    if not is_occupied:
-                        will_be_occupied = calendar[0].start
-                self.__logger.debug("occupied: {} will_be_free={} will_be_occupied={} events: {}".format(is_occupied, will_be_free, will_be_occupied, events_count))
-                meeting_room_occupancy.add_metric(labels=[room_list.name, room.name, room.email_address], value=int(is_occupied))
-                meeting_room_will_be_occupied.add_metric(labels=[room_list.name, room.name, room.email_address], value=will_be_occupied.timestamp())
-                meeting_room_will_be_free.add_metric(labels=[room_list.name, room.name, room.email_address], value=will_be_free.timestamp())
-                today_meetings_left.add_metric(labels=[room_list.name, room.name, room.email_address], value=events_count)
+                    is_occupied = False
+                    will_be_free = now
+                    will_be_occupied = self.__account.default_timezone.localize(datetime.max - timedelta(1))
+                    events_count = 0
+                    if calendar.exists():
+                        for i, event in enumerate(calendar):
+                            events_count += 1
+                            if event.start <= now <= event.end:
+                                is_occupied = True
+                                will_be_free = event.end
+                                continue
+                            if will_be_free == event.start:
+                                will_be_free = event.end
+                        if not is_occupied:
+                            will_be_occupied = calendar[0].start
+                    self.__logger.debug("occupied: {} will_be_free={} will_be_occupied={} events: {}".format(is_occupied, will_be_free, will_be_occupied, events_count))
+                    meeting_room_occupancy.add_metric(labels=[room_list.name, room.name, room.email_address], value=int(is_occupied))
+                    meeting_room_will_be_occupied.add_metric(labels=[room_list.name, room.name, room.email_address], value=will_be_occupied.timestamp())
+                    meeting_room_will_be_free.add_metric(labels=[room_list.name, room.name, room.email_address], value=will_be_free.timestamp())
+                    today_meetings_left.add_metric(labels=[room_list.name, room.name, room.email_address], value=events_count)
+            self.__logger.info("finished processing of {} room lists wit total {} rooms and {} rooms skipped, duration {}".format(
+                room_list_count, room_count, skipped_count, datetime.now() - start
+            ))
+            self.__last_update = datetime.now()
+        except Exception as e:
+            self.__logger.info("failed to update meeting room data, error: {}".format(e))
+            errors_total.labels(e.__class__.__name__).inc()
+            up.set(0)
+            return []
 
-        self.__logger.info("finished processing of {} room lists wit total {} rooms and {} rooms skipped, duration {}".format(
-            room_list_count, room_count, skipped_count, datetime.now() - start
-        ))
-        self.__last_update = datetime.now()
-        self.__cache = [
+        up.set(1)
+        return [
             meeting_room_occupancy,
             meeting_room_will_be_occupied,
             meeting_room_will_be_free,
-            today_meetings_left
+            today_meetings_left,
         ]
 
 
@@ -161,7 +182,7 @@ if __name__ == "__main__":
     parser.add_argument('--room-list-regex', type=str, default=".*",
                         help='Regular expression used to filter meeting rooms lists (All rooms of the list will be skipped).')
     parser.add_argument('--room-name-regex', type=str, default=".*", help='Regular expression used to filter meeting rooms.')
-    parser.add_argument('-i', '--update-interval-seconds', type=int, default=60, help='Update interval in seconds.')
+    parser.add_argument('-i', '--update-interval-seconds', type=int, default=0, help='Update interval in seconds.')
     parser.add_argument('-d', '--debug', action='store_true', default=False, help='Enable debug logging.')
 
     args = parser.parse_args()
@@ -180,5 +201,6 @@ if __name__ == "__main__":
     )
 
     REGISTRY.register(collector)
-    app.add_task(collector.async_update_cache())
+    if collector.use_cache:
+        app.add_task(collector.start_cache_update)
     app.run(host='0.0.0.0', port=args.port)
